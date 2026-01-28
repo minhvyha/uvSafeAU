@@ -10,7 +10,6 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: 'UV-Safe AU - UV Index & Sun Safety Dashboard',
   description: 'Track UV index, time to burn, and daily vitamin D intake with UV-Safe AU',
-  generator: 'v0.app',
   icons: {
     icon: [
       {
