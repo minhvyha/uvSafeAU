@@ -7,7 +7,7 @@ import { UVGauge } from '@/components/uv-gauge'
 import { TimeToBurnTimer } from '@/components/time-to-burn-timer'
 import { SkinTypeSelector, skinTypes } from '@/components/skin-type-selector'
 import { LocationSelector } from '@/components/location-selector'
-import { Sun, Info, RefreshCw, Clock, Sunrise, Sunset, AlertCircle, Shield, Glasses, CircleDot, Umbrella, TrendingUp, Droplets, Activity } from 'lucide-react'
+import { Sun, Info, RefreshCw, Clock, Sunrise, Sunset, AlertCircle, Shield, Glasses, CircleDot, Umbrella, TrendingUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -15,6 +15,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip as ReTooltip,
+  CartesianGrid,
+  ReferenceLine,
+} from 'recharts'
 
 interface UVForecastPoint {
   uv: number
@@ -68,45 +79,122 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-  const [vitaminDProgress, setVitaminDProgress] = useState(0)
-  const [vitaminDStatus, setVitaminDStatus] = useState({ color: '', text: '' })
 
-  // Fetch UV data from OpenUV API
-  const fetchUVData = async (lat: number, lng: number) => {
-    setIsLoading(true)
-    setError(null)
-    
-    try {
-      const response = await fetch(`/api/uv?lat=${lat}&lng=${lng}`)
-      const data: UVApiResponse = await response.json()
-      
-      if (data.success && data.result) {
-        setUvIndex(data.result.uv)
-        setUvMax(data.result.uv_max)
-        setUvMaxTime(data.result.uv_max_time)
-        setSafeExposureTimes({
-          st1: data.result.safe_exposure_time.st1,
-          st2: data.result.safe_exposure_time.st2,
-          st3: data.result.safe_exposure_time.st3,
-          st4: data.result.safe_exposure_time.st4,
-          st5: data.result.safe_exposure_time.st5,
-          st6: data.result.safe_exposure_time.st6,
-        })
-        setSunInfo(data.result.sun_info.sun_times)
-        if (data.forecast) {
-          setForecast(data.forecast)
-        }
-        setLastUpdated(new Date())
-      } else {
-        setError(data.error || 'Failed to fetch UV data')
-      }
-    } catch (err) {
-      setError('Failed to connect to UV service')
-      console.error('UV fetch error:', err)
-    } finally {
-      setIsLoading(false)
+// helper to normalize a forecast point
+const normalizePoint = (p: any): UVForecastPoint | null => {
+  if (!p) return null
+  let ts = p.uv_time ?? p.time ?? p.timestamp ?? null
+
+  // if numeric unix seconds or milliseconds
+  if (typeof ts === 'number') {
+    // heuristics: if > 1e12 assume ms, if between 1e9 and 1e12 assume s
+    if (ts > 1e12) ts = new Date(ts).toISOString()
+    else if (ts > 1e9) ts = new Date(ts * 1000).toISOString()
+    else ts = null
+  }
+
+  // if string, ensure it parses
+  if (typeof ts === 'string') {
+    const parsed = new Date(ts)
+    if (isNaN(parsed.getTime())) {
+      // try forcing UTC by appending Z if no timezone present
+      const maybeUtc = new Date(ts + 'Z')
+      if (!isNaN(maybeUtc.getTime())) ts = maybeUtc.toISOString()
+      else return null
+    } else {
+      ts = parsed.toISOString()
     }
   }
+
+  // uv value fallback
+  const uvVal = p.uv ?? p.value ?? p.UV ?? null
+  if (uvVal == null) return null
+
+  return {
+    uv: Number(uvVal),
+    uv_time: ts,
+  }
+}
+
+const fetchUVData = async (lat: number, lng: number) => {
+  setIsLoading(true)
+  setError(null)
+
+  try {
+    const response = await fetch(`/api/uv?lat=${lat}&lng=${lng}`)
+    const data: UVApiResponse & any = await response.json()
+
+    console.debug('Raw UV API response', data)
+
+    if (data.success && data.result) {
+      setUvIndex(data.result.uv)
+      setUvMax(data.result.uv_max)
+      setUvMaxTime(data.result.uv_max_time)
+      setSafeExposureTimes({
+        st1: data.result.safe_exposure_time.st1,
+        st2: data.result.safe_exposure_time.st2,
+        st3: data.result.safe_exposure_time.st3,
+        st4: data.result.safe_exposure_time.st4,
+        st5: data.result.safe_exposure_time.st5,
+        st6: data.result.safe_exposure_time.st6,
+      })
+      setSunInfo(data.result.sun_info?.sun_times ?? null)
+
+      // accept forecast from either top-level or inside result
+      const rawForecast = data.forecast ?? data.result?.forecast ?? null
+      if (Array.isArray(rawForecast)) {
+        // normalize, filter out invalids, sort by time
+        const normalized = rawForecast
+          .map(normalizePoint)
+          .filter(Boolean) as UVForecastPoint[]
+        normalized.sort((a, b) => new Date(a.uv_time).getTime() - new Date(b.uv_time).getTime())
+        console.debug('Normalized forecast points', normalized)
+        setForecast(normalized)
+      } else {
+        console.debug('No forecast array in API response')
+        setForecast([])
+      }
+
+      setLastUpdated(new Date())
+    } else {
+      setError(data.error || 'Failed to fetch UV data')
+    }
+  } catch (err) {
+    setError('Failed to connect to UV service')
+    console.error('UV fetch error:', err)
+  } finally {
+    setIsLoading(false)
+  }
+}
+
+// Get next 24 hours of forecast data (returns up to 24 points)
+const getForecast24h = () => {
+  if (!forecast.length) return []
+  const now = Date.now()
+  const next24h = now + 24 * 60 * 60 * 1000
+
+  // include points that fall within [now, next24h], allow small buffer of -5 minutes to include near-past points
+  const bufferMs = 5 * 60 * 1000
+  const pts = forecast.filter((point) => {
+    const t = new Date(point.uv_time).getTime()
+    return t >= now - bufferMs && t <= next24h + bufferMs
+  })
+
+  // ensure sorted ascending and cap to 24 entries
+  pts.sort((a, b) => new Date(a.uv_time).getTime() - new Date(b.uv_time).getTime())
+  return pts.slice(0, 24)
+}
+
+const forecast24h = getForecast24h()
+
+// Prepare data for recharts
+const chartData = forecast24h.map((p) => {
+  const date = new Date(p.uv_time)
+  return {
+    timeLabel: date.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' }),
+    uv: Number(p.uv),
+  }
+})
 
   // Fetch UV data on mount and when location changes
   useEffect(() => {
@@ -232,18 +320,7 @@ export default function Dashboard() {
 
   const protection = getProtectionRecommendations()
 
-  // Get next 24 hours of forecast data
-  const getForecast24h = () => {
-    if (!forecast.length) return []
-    const now = new Date()
-    const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-    return forecast.filter((point) => {
-      const pointTime = new Date(point.uv_time)
-      return pointTime >= now && pointTime <= next24h
-    }).slice(0, 12) // Show up to 12 data points
-  }
 
-  const forecast24h = getForecast24h()
 
   return (
     <div className="min-h-screen bg-background">
@@ -480,7 +557,7 @@ export default function Dashboard() {
           </Card>
         </section>
 
-        {/* UV Forecast Trend Section */}
+        {/* UV Forecast Trend Section - replaced with recharts area chart styled to match shadcn */}
         <section className="mb-8">
           <Card className="bg-card shadow-xl border-2 border-border p-6">
             <div className="flex items-center gap-3 mb-6">
@@ -493,38 +570,37 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {forecast24h.length > 0 ? (
+            {chartData.length > 0 ? (
               <>
-                {/* Forecast Chart */}
-                <div className="relative h-48 mb-4">
-                  <div className="absolute inset-0 flex items-end justify-between gap-1">
-                    {forecast24h.map((point, index) => {
-                      const maxUV = Math.max(...forecast24h.map(p => p.uv), 11)
-                      const height = (point.uv / maxUV) * 100
-                      const time = new Date(point.uv_time)
-                      
-                      const getBarColor = (uv: number) => {
-                        if (uv < 3) return 'bg-emerald-500'
-                        if (uv < 6) return 'bg-amber-500'
-                        if (uv < 8) return 'bg-orange-500'
-                        if (uv < 11) return 'bg-red-500'
-                        return 'bg-purple-500'
-                      }
-                      
-                      return (
-                        <div key={index} className="flex-1 flex flex-col items-center gap-1">
-                          <span className="text-xs font-medium text-foreground">{point.uv.toFixed(1)}</span>
-                          <div 
-                            className={`w-full rounded-t-md transition-all duration-300 ${getBarColor(point.uv)}`}
-                            style={{ height: `${Math.max(height, 5)}%` }}
-                          />
-                          <span className="text-xs text-muted-foreground">
-                            {time.toLocaleTimeString('en-AU', { hour: '2-digit' })}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
+                <div className="h-48 mb-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <defs>
+                        <linearGradient id="uvGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopOpacity={0.35} />
+                          <stop offset="95%" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="timeLabel" tick={{ fontSize: 12 }} />
+                      <YAxis domain={[0, Math.max(...chartData.map((d) => d.uv), 11)]} tick={{ fontSize: 12 }} />
+                      <ReTooltip formatter={(value: any) => `${Number(value).toFixed(1)} UV`} />
+
+                      {/* Reference lines for UV thresholds */}
+                      <ReferenceLine y={3} stroke="#65a30d" strokeDasharray="3 3" />
+                      <ReferenceLine y={6} stroke="#d97706" strokeDasharray="3 3" />
+                      <ReferenceLine y={8} stroke="#dc2626" strokeDasharray="3 3" />
+
+                      <Area
+                        type="monotone"
+                        dataKey="uv"
+                        stroke="var(--accent)"
+                        fillOpacity={1}
+                        fill="url(#uvGradient)"
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
 
                 {/* UV Level Reference */}
