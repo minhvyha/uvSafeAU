@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
           },
         }
       )
-
+        console.log('Forecast response status:', forecastResponse.status)
       if (forecastResponse.ok) {
         const forecastData = await forecastResponse.json()
         forecast = forecastData.result
@@ -115,6 +115,7 @@ export async function GET(request: NextRequest) {
     } catch (forecastError) {
       console.error('Error fetching forecast:', forecastError)
     }
+    console.log(forecast)
     
     return NextResponse.json({
       success: true,
