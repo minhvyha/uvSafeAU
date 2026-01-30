@@ -238,7 +238,6 @@ export default function Dashboard() {
   };
 
   // Get next 24 hours of forecast data (returns up to 24 points)
-  // Replace your getForecast24h implementation with this:
   const getForecast24h = () => {
     if (!forecast.length) return [];
     // assume forecast is time-ordered; if not, sort it first
@@ -290,7 +289,6 @@ export default function Dashboard() {
   };
 
   // split the chartData into contiguous segments that share the same category
-  // replace your splitIntoSegments with this
 const splitIntoSegments = (data: { timeLabel: string; uv: number }[]) => {
   if (!data || data.length === 0) return [];
 
