@@ -221,7 +221,7 @@ export default function Dashboard() {
           .map(normalizePoint)
           .filter((x: any): x is UVForecastPoint => x !== null);
         normalized.sort(
-          (a, b) =>
+          (a: { uv_time: string | number | Date; }, b: { uv_time: string | number | Date; })  =>
             new Date(a.uv_time).getTime() - new Date(b.uv_time).getTime(),
         );
         setForecast(normalized);
@@ -833,7 +833,7 @@ const splitIntoSegments = (data: { timeLabel: string; uv: number }[]) => {
                           y2="1"
                         >
                           <stop
-                            offset="5%"
+                            offset="55%"
                             stopColor="var(--accent)"
                             stopOpacity={0.35}
                           />
@@ -884,31 +884,18 @@ const splitIntoSegments = (data: { timeLabel: string; uv: number }[]) => {
                       <Area
                         type="monotone"
                         dataKey="uv"
-                        stroke="none" // don't draw a competing stroke
+                        stroke="var(--accent)"
+                        strokeWidth={2}
                         fill="url(#uvGradient)"
                         fillOpacity={1}
                         isAnimationActive={false}
                         connectNulls={true}
+                        dot={false}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
 
-                      {/* overlay colored strokes by segment */}
-                      {lineSegments.map((seg, idx) =>
-                        seg.length >= 2 ? (
-                          <Line
-                            key={idx}
-                            data={seg}
-                            type="monotone"
-                            dataKey="uv"
-                            stroke={getColorForCategory(getCategory(seg[0].uv))}
-                            strokeWidth={2}
-                            dot={false}
-                            isAnimationActive={false}
-                            connectNulls={true}
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        ) : null,
-                      )}
+
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
